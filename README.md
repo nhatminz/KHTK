@@ -1,4 +1,4 @@
-# KHTK — Phân loại kịch bản điện ô tô giả lập
+# KHTK — Uoc duoc thay cho A+ <3
 
 Dự án nghiên cứu hai bộ phân loại nhị phân độc lập về ảnh hưởng của hệ thống giải trí Android và ampli đến hệ thống điện, với ngữ cảnh Toyota Yaris 2008 và các cấu hình xe tham chiếu khác.
 
