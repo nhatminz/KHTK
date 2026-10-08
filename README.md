@@ -273,3 +273,16 @@ Không có quan sát training từ xe thật và không có nhãn chẩn đoán 
 Không dùng kết quả để khẳng định cần thay máy phát, kết luận màn hình gây chết máy hay quyết định sửa chữa khi chưa có dữ liệu thực nghiệm. Muốn nghiên cứu áp dụng cần thu thập số đo hợp lệ, xác minh VIN/mã phụ tùng, có nhãn chuyên môn độc lập và đánh giá trên xe thật chưa có trong huấn luyện. Các “sức khỏe %” là proxy cần định nghĩa phép đo rõ ràng; không phải đại lượng tự có chỉ bằng nhập tên mẫu xe.
 
 Tài liệu phương pháp: [scikit-learn: tránh leakage qua Pipeline](https://scikit-learn.org/stable/common_pitfalls.html), [cross-validation theo nhóm](https://scikit-learn.org/stable/modules/cross_validation.html). Nguồn thông số xe được lưu trong CSV reference và sheet `Sources`; pipeline kiểm tra tính nhất quán với dữ liệu đã cung cấp, không tự tuyên bố xác minh các nguồn đó cho xe người dùng.
+
+## 9. Kết quả phiên kiểm tra thực tế
+
+Trước khi nhận yêu cầu dừng chạy thử, pipeline đã chạy với seed 2026 và cấu hình mặc định trên Python 3.13.9: **24 tests đạt, 1 test XGBoost bỏ qua vì thư viện chưa cài**, không có warning trong lần chạy tests cuối. Huấn luyện đầy đủ, lưu/nạp lại hai model, kiểm tra dependency và predict 5 dòng đã thành công. Dữ liệu raw giữ nguyên hash.
+
+| Nhãn | Model được chọn bằng validation | Threshold | Test Accuracy | BAcc | Precision | Recall | F1 | AP | ROC-AUC | FPR |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Y1 | HistGradientBoosting (engineered) | 0.6170 | 0.8773 | 0.8289 | 0.8785 | 0.7015 | 0.7801 | 0.8911 | 0.9355 | 0.0436 |
+| Y2 | LogisticRegression (raw) | 0.2576 | 0.9005 | 0.8071 | 0.4107 | 0.6970 | 0.5169 | 0.6357 | 0.9402 | 0.0827 |
+
+Y2 có AP validation 0,9348 nhưng AP test 0,6357, Precision test chỉ 0,4107. F1 test ở ngưỡng tuned 0,5169 thấp hơn ngưỡng 0.5 (0,5758), dù Recall tăng. Giữ nguyên lựa chọn từ validation; không đổi model hoặc threshold theo kết quả test. Với 33 phiên dương trong test và dữ liệu hoàn toàn giả lập, chưa có bằng chứng đủ cho ứng dụng xe thật.
+
+Bảng test của **mọi thuật toán và cả hai biến thể raw/engineered**, confusion matrices, ablation và xác nhận thực thi ở [báo cáo bàn giao](outputs/reports/completion_report.md); dữ liệu máy đọc ở [evaluation.json](outputs/reports/evaluation.json), [model_comparison.csv](outputs/reports/model_comparison.csv) và [verification.json](outputs/reports/verification.json). Đây là snapshot của phiên đã kiểm tra; sau khi chạy lại, xem artifacts mới để biết kết quả hiện hành.
