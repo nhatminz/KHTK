@@ -20,6 +20,8 @@ from src.data_processing import (DEFAULT_DATA, ROOT, SIMULATION_WARNING, audit_d
 from src.evaluation import metrics, save_evaluation_plots, tune_threshold
 from src.feature_engineering import (ENGINEERED, SAFE_FEATURES, TARGETS, feature_list, feature_policy)
 from src.modeling import build_pipeline, model_specs, rebuild_variant
+from src.real_data import load_real_training
+from src.feature_engineering import categorical_value
 
 
 def cli():
@@ -28,7 +30,13 @@ def cli():
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs")
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--models", nargs="+", default=None,
-                        help="Dummy LogisticRegression RandomForest HistGradientBoosting XGBoost; default: all available")
+                        help="Dummy LogisticRegression MLP RandomForest HistGradientBoosting XGBoost TabPFN; TabPFN requires explicit selection")
+    parser.add_argument("--additional-train-data", type=Path, help="Independently labeled real CSV; appended to train only")
+    parser.add_argument("--tabpfn-rows", type=int, default=0,
+                        help="0 (default): use every training row; positive value: optional context limit")
+    parser.add_argument("--tabpfn-version", default="v2", choices=["v2", "v2.5", "v3", "v3.5-fast"],
+                        help="v2 avoids newer gated checkpoints; other versions may require PriorLabs access")
+    parser.add_argument("--skip-permutation-importance", action="store_true", help="Reduce repeated CPU inference")
     parser.add_argument("--search-iterations", type=int, default=4)
     parser.add_argument("--cv-folds", type=int, default=3)
     parser.add_argument("--jobs", type=int, default=2, help="CPU threads; search runs sequentially to avoid oversubscription")
@@ -37,8 +45,8 @@ def cli():
     parser.add_argument("--skip-ablations", action="store_true", help="Skip music/context/measured validation experiments")
     parser.add_argument("--skip-profile-experiment", action="store_true")
     args = parser.parse_args()
-    if args.search_iterations < 1 or args.cv_folds < 2 or args.jobs < 1 or not 0 <= args.max_fpr <= 1:
-        parser.error("iterations >= 1, folds >= 2, jobs >= 1, max-fpr in [0, 1] required")
+    if args.search_iterations < 1 or args.cv_folds < 2 or args.jobs < 1 or (args.tabpfn_rows != 0 and args.tabpfn_rows < 32) or not 0 <= args.max_fpr <= 1:
+        parser.error("iterations >= 1, folds >= 2, jobs >= 1, tabpfn-rows = 0 or >= 32, max-fpr in [0, 1] required")
     return args
 
 
@@ -98,21 +106,32 @@ def train(args):
     parts = group_split(df, args.seed)
     train_df, val_df, test_df = [df.iloc[parts[name]] for name in ["train", "validation", "test"]]
     summary = split_summary(df, parts)
+    real_report = None
+    if args.additional_train_data:
+        extra, real_report = load_real_training(args.additional_train_data, df)
+        train_df = pd.concat([train_df, extra], ignore_index=True)
+        write_json(output / "reports/real_training_import.json", real_report)
     write_json(output / "reports/split_summary.json", summary)
     assignments = df[["scenario_id", "vehicle_id", "profile_id"]].copy()
     assignments["split"] = ""
     for name, indices in parts.items():
         assignments.iloc[indices, assignments.columns.get_loc("split")] = name
+    if real_report:
+        extra_assignments = extra[["scenario_id", "vehicle_id", "profile_id"]].copy()
+        extra_assignments["split"] = "train_real"
+        assignments = pd.concat([assignments, extra_assignments], ignore_index=True)
     assignments.to_csv(output / "reports/split_assignments.csv", index=False, encoding="utf-8-sig")
     print("Split:", {k: (v["rows"], v["vehicles"]) for k, v in summary.items()}, flush=True)
-    specs, unavailable = model_specs(args.seed, args.jobs)
+    specs, unavailable = model_specs(args.seed, args.jobs,
+        include_tabpfn=bool(args.models and "TabPFN" in args.models),
+        tabpfn_rows=args.tabpfn_rows, tabpfn_version=args.tabpfn_version)
     if args.models:
         unknown = set(args.models) - set(specs)
         if unknown:
             raise ValueError(f"Unavailable/unknown models: {sorted(unknown)}; {unavailable}")
         specs = {k: v for k, v in specs.items() if k in args.models or k == "Dummy"}
     versions = {}
-    for package in ["numpy", "pandas", "scikit-learn", "joblib", "matplotlib", "openpyxl", "xgboost"]:
+    for package in ["numpy", "pandas", "scikit-learn", "joblib", "matplotlib", "openpyxl", "xgboost", "torch", "tabpfn"]:
         try:
             versions[package] = version(package)
         except PackageNotFoundError:
@@ -128,6 +147,17 @@ def train(args):
               "search_spaces": {k: v[2] for k, v in specs.items()}, "safe_features": SAFE_FEATURES,
               "engineered_formulas": ENGINEERED, "oversampling": False,
               "skip_ablations": args.skip_ablations, "skip_profile_experiment": args.skip_profile_experiment}
+    config.update({"real_training_import": real_report, "actual_training_rows": len(train_df),
+        "tabpfn": {"enabled": "TabPFN" in specs, "version": args.tabpfn_version,
+                   "max_train_context_rows": args.tabpfn_rows or None,
+                   "actual_train_context_rows": min(args.tabpfn_rows, len(train_df)) if args.tabpfn_rows else len(train_df),
+                   "context_policy": "All train rows" if args.tabpfn_rows == 0 else "Optional stratified train-only subset",
+                   "device": "cpu", "ensemble_size": 1,
+                   "input": "Native named DataFrame; no OHE/scaling/imputation outside TabPFN",
+                   "persistence": "Save fitted contextual data; restore same pretrained checkpoint on first prediction"},
+        "MLP": {"hidden_layers": [32, 16], "max_iter": 200, "batch_size": 64,
+                "early_stopping": False, "device": "cpu"},
+        "skip_permutation_importance": args.skip_permutation_importance})
     write_json(output / "reports/training_config.json", config)
     rows, all_candidates, selections, feature_reports = [], {}, {}, {}
     for target_index, target in enumerate(TARGETS, 1):
@@ -148,7 +178,7 @@ def train(args):
                 tuning_records.append({"model": name, "best_params": search.best_params_, "cv_ap": cv_ap})
             else:
                 fitted = pipeline.fit(train_df, train_df[target])
-            for engineered in ([False] if name == "Dummy" else [False, True]):
+            for engineered in ([False] if name in ["Dummy", "TabPFN"] else [False, True]):
                 candidate_pipeline = fitted if not engineered else rebuild_variant(fitted, engineered=True).fit(train_df, train_df[target])
                 probabilities = candidate_pipeline.predict_proba(val_df)[:, 1]
                 tuned, curve = tune_threshold(val_df[target], probabilities, args.max_fpr)
@@ -168,7 +198,7 @@ def train(args):
             if row["target"] == target and row["model"] == winner["model"] and row["engineered"] == winner["engineered"]:
                 row["selected"] = True
         write_json(output / f"reports/y{target_index}_tuning.json", tuning_records)
-        if not args.skip_ablations:
+        if not args.skip_ablations and winner["model"] != "TabPFN":
             raw = next(c for c in candidates if c["model"] == winner["model"] and not c["engineered"])
             for variant in ["music", "context", "measured"]:
                 ablation = rebuild_variant(raw["pipeline"], variant=variant).fit(train_df, train_df[target])
@@ -177,21 +207,24 @@ def train(args):
                 curve.to_csv(output / f"reports/y{target_index}_{variant}_thresholds.csv", index=False)
                 rows.append(compare_record(target, raw["model"], variant, False, "ablation_validation_tuned", tuned))
                 rows.append(compare_record(target, raw["model"], variant, False, "ablation_validation_0.5", metrics(val_df[target], probabilities)))
-                importance = permutation_importance(ablation, val_df[feature_list(variant)], val_df[target],
-                    scoring="average_precision", n_repeats=3, random_state=args.seed, n_jobs=1)
-                pd.DataFrame({"feature": feature_list(variant), "mean_AP_drop": importance.importances_mean,
-                    "std_AP_drop": importance.importances_std}).sort_values("mean_AP_drop", ascending=False).to_csv(
-                        output / f"reports/y{target_index}_{variant}_permutation_importance.csv", index=False)
+                if not args.skip_permutation_importance:
+                    importance = permutation_importance(ablation, val_df[feature_list(variant)], val_df[target],
+                        scoring="average_precision", n_repeats=3, random_state=args.seed, n_jobs=1)
+                    pd.DataFrame({"feature": feature_list(variant), "mean_AP_drop": importance.importances_mean,
+                        "std_AP_drop": importance.importances_std}).sort_values("mean_AP_drop", ascending=False).to_csv(
+                            output / f"reports/y{target_index}_{variant}_permutation_importance.csv", index=False)
         required = feature_list("safe")
-        importance = permutation_importance(winner["pipeline"], val_df[required], val_df[target],
-            scoring="average_precision", n_repeats=5, random_state=args.seed, n_jobs=1)
-        pd.DataFrame({"feature": required, "mean_AP_drop": importance.importances_mean,
-            "std_AP_drop": importance.importances_std}).sort_values("mean_AP_drop", ascending=False).to_csv(
-                output / f"reports/y{target_index}_permutation_importance.csv", index=False)
+        if not args.skip_permutation_importance and winner["model"] != "TabPFN":
+            importance = permutation_importance(winner["pipeline"], val_df[required], val_df[target],
+                scoring="average_precision", n_repeats=5, random_state=args.seed, n_jobs=1)
+            pd.DataFrame({"feature": required, "mean_AP_drop": importance.importances_mean,
+                "std_AP_drop": importance.importances_std}).sort_values("mean_AP_drop", ascending=False).to_csv(
+                    output / f"reports/y{target_index}_permutation_importance.csv", index=False)
         feature_reports[target] = {"variant": "safe", "engineered": winner["engineered"], "required_raw_features": required,
             "model_features": feature_list("safe", winner["engineered"]),
             "excluded_columns": [c for c in df if c not in required],
-            "transformed_features": winner["pipeline"].named_steps["preprocess"].get_feature_names_out().tolist()}
+            "transformed_features": (feature_list("safe", winner["engineered"]) if winner["model"] == "TabPFN"
+                else winner["pipeline"].named_steps["preprocess"].get_feature_names_out().tolist())}
     if not args.skip_profile_experiment:
         print("Running fixed model profile-disjoint experiment on development vehicles...", flush=True)
         profile_experiment(df.iloc[np.r_[parts["train"], parts["validation"]]], output, args.seed, args.cv_folds)
@@ -237,7 +270,8 @@ def train(args):
             "threshold": selections[target]["validation"]["threshold"],
             "required_raw_features": feature_reports[target]["required_raw_features"],
             "training_ranges": {c: [float(train_df[c].min()), float(train_df[c].max())] for c in SAFE_FEATURES},
-            "training_categories": {"amp_ngoai_co_lap": [str(v) for v in train_df["amp_ngoai_co_lap"].unique()]}}
+            "training_categories": {"amp_ngoai_co_lap": [categorical_value(v, "amp_ngoai_co_lap")
+                for v in train_df["amp_ngoai_co_lap"].dropna().unique()]}}
     write_json(output / "models/inference_schema.json", schema)
     val_df.iloc[:5][["scenario_id", *SAFE_FEATURES]].to_csv(output / "reports/example_input.csv", index=False, encoding="utf-8-sig")
     config["elapsed_seconds"] = round(perf_counter() - started, 2)
