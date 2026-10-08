@@ -184,29 +184,8 @@ Nếu một thành phần thiếu, feature dẫn xuất cũng thiếu, rồi đ�
 
 Thí nghiệm khó hơn `profile_generalization.json`: GroupKFold theo profile trên **train+validation** thôi, với HGB có tham số cố định trước và threshold 0.5. Mỗi fold giữ toàn bộ một số profile chưa có trong train fold; đồng thời xe không giao nhau vì mỗi xe có một profile. Đây là thí nghiệm riêng, không dùng model/hyperparameter được chọn theo validation để tránh kết quả CV giả độc lập, và không tác động việc chọn model chính. Chỉ 14 profile và vẫn là giả lập nên không chứng minh tổng quát hóa ra mọi dòng xe.
 
-## 4. Đọc kết quả
 
-`outputs/reports/model_comparison.csv` có các dòng `validation_0.5`, `validation_tuned`, `test_0.5`, `test_tuned`, và `ablation_validation_*`. So sánh đúng stage/threshold, chú ý cờ `engineered` và `selected`. `cv_average_precision` là điểm CV tuning raw trên train, không phải test. AP được tính bằng `average_precision_score`, không phải tích phân trapezoid PR curve; báo cáo dùng tên Average Precision (PR-AUC theo quy ước yêu cầu).
-
-| Metric | Cách hiểu |
-| --- | --- |
-| Accuracy | Tỷ lệ đúng toàn bộ; dễ cao với model luôn dự đoán âm khi Y2 hiếm |
-| Balanced Accuracy | Trung bình Recall của lớp âm và lớp dương |
-| Precision | Trong các phiên báo dương, bao nhiêu phiên thật sự dương theo nhãn mô phỏng |
-| Recall | Trong các phiên nhãn dương, bao nhiêu phiên được phát hiện |
-| F1 | Trung bình điều hòa Precision/Recall; thấp nếu một thành phần thấp |
-| Average Precision / PR-AUC | Chất lượng xếp hạng lớp dương trên các ngưỡng; baseline ngẫu nhiên gần tỷ lệ dương |
-| ROC-AUC | Khả năng xếp hạng dương trên âm; chỉ tính khi tập có hai lớp |
-| FPR | `FP / (FP + TN)`, tỷ lệ phiên âm bị báo dương; giới hạn validation không bảo đảm FPR test/xe thật |
-| Confusion matrix | Hàng là nhãn thật, cột là dự đoán, thứ tự `[[TN, FP], [FN, TP]]` |
-
-Threshold quyết định từ xác suất sang 0/1; thay ngưỡng đổi Precision/Recall/FPR nhưng không đổi AP/ROC-AUC. Xác suất mô hình chưa được calibration và chỉ phản ánh mô phỏng; không coi đó là xác suất lỗi xe thật.
-
-`evaluation.json` lưu model được chọn, validation/test ở ngưỡng tuned và 0.5, cùng tỷ lệ nhãn. Các biểu đồ confusion matrix/PR/ROC nằm ở `outputs/plots/`. `*_permutation_importance.csv` đo mức giảm AP khi xáo trộn một đầu vào trên validation, với trung bình và độ lệch chuẩn. Giá trị âm hoặc gần 0 có thể do nhiễu; biến tương quan có thể chia sẻ importance. Importance không chứng minh nhân quả và không được dùng để chọn lại feature theo test.
-
-EDA gồm `data_quality_report.json`, `feature_summary.csv`, `missing_values.csv`, `target_distribution.csv`, `joint_target_distribution.csv`, `targets_by_vehicle_id.csv`, `targets_by_profile_id.csv`, `numeric_correlations.csv`, `data_dictionary.csv` và histogram trong `outputs/eda/plots/`.
-
-## 5. Predict CSV mới
+## 4. Predict CSV mới
 
 Sau khi train:
 
@@ -214,13 +193,6 @@ Sau khi train:
 python predict.py --input outputs/reports/example_input.csv --models-dir outputs/models --output outputs/predictions.csv
 python predict.py --input du_lieu_moi.csv --models-dir outputs/models --output outputs/du_doan_moi.csv
 ```
-
-`example_input.csv` chứa 5 quan sát đã có từ validation, bỏ nhãn và biến bị loại; đây là ví dụ inference, không phải dữ liệu thật hoặc thêm dữ liệu train. CSV mới cần đủ 17 cột raw SAFE_FEATURES như bảng trên; không cần nhãn, ID hay tự tính bốn engineered feature. Có thể dùng header và kiểu dữ liệu của file ví dụ làm mẫu. ID nếu có sẽ được giữ trong kết quả để đối chiếu, không dùng làm đầu vào model.
-
-Predict đọc `inference_schema.json`, kiểm tra cột bắt buộc và giá trị numeric/giới hạn vật lý, xác minh hash model khớp metadata, nạp hai joblib pipeline, dùng threshold đã lưu. Một số ô thiếu được cảnh báo và impute bằng thống kê train; nếu thiếu toàn bộ một feature cần thiết thì dừng để yêu cầu số đo/ước lượng hợp lệ. Đầu vào ngoài khoảng quan sát train được cảnh báo vì có nguy cơ ngoại suy. Category mới được encoder xử lý; các cờ vật lý 0/1 vẫn phải hợp lệ.
-
-Output có `<target>_probability`, `<target>_prediction`, `<target>_threshold` cho Y1/Y2 và `interpretation=SIMULATION_RESEARCH_ONLY`. Xác suất phải hữu hạn trong [0,1]. Không ghi đè input hoặc ghi kết quả vào `data/raw/`. Không suy dòng điện từ giá bán màn hình, thể loại nhạc, ca sĩ hoặc dung tích động cơ.
-
 ## 6. Cấu trúc và các file chính
 
 ```text
@@ -256,33 +228,14 @@ khtk/
 
 Tất cả đường dẫn mặc định được xây từ `pathlib.Path` và vị trí project, không hardcode máy cá nhân. Giữ thư mục `src/` khi di chuyển artifacts sang máy khác để joblib nạp được custom transformer/wrapper.
 
-## 7. Tests và tái lập
 
-```bash
-python -m pytest -q
-```
-
-Tests kiểm tra BOM/schema/nhãn, range sai/Inf/chuỗi sai, dư địa điện âm hợp lệ, scenario trùng/ID thiếu/nhãn thiếu, imputation numeric/categorical và unseen hãng/mẫu, thống kê imputer không thay đổi khi predict validation, leakage/target/ID không ảnh hưởng dự đoán, công thức và missing propagation, nhóm split/CV không trùng, reload model, threshold/FPR, lỗi schema inference và xác suất hợp lệ. Test end-to-end thực sự gọi CLI train với Dummy/Logistic rồi predict CSV trong output tạm; không ghi đè các artifacts chính. Test XGBoost bỏ qua nếu không có thư viện.
-
-Seed cố định và phiên bản core trong requirements giúp tái lập trong cùng môi trường; khác CPU/thư viện vẫn có thể có sai khác dấu phẩy động nhỏ. `training_config.json` lưu version thực tế, SHA-256 dữ liệu, seed, search space, split và thời gian chạy.
-
-## 8. Giới hạn nghiên cứu
-
-Không có quan sát training từ xe thật và không có nhãn chẩn đoán thực nghiệm. Việc tách theo xe giúp tránh rò rỉ giữa các phiên của cùng xe giả, nhưng toàn bộ dữ liệu vẫn xuất phát từ cùng mô phỏng; model có thể học quy tắc của bộ sinh dữ liệu. F1/AP cao không xác nhận độ chính xác ngoài đời, tác động nhân quả, công suất máy phát của chiếc Yaris cụ thể hoặc độ an toàn của việc nâng cấp.
-
-Không dùng kết quả để khẳng định cần thay máy phát, kết luận màn hình gây chết máy hay quyết định sửa chữa khi chưa có dữ liệu thực nghiệm. Muốn nghiên cứu áp dụng cần thu thập số đo hợp lệ, xác minh VIN/mã phụ tùng, có nhãn chuyên môn độc lập và đánh giá trên xe thật chưa có trong huấn luyện. Các “sức khỏe %” là proxy cần định nghĩa phép đo rõ ràng; không phải đại lượng tự có chỉ bằng nhập tên mẫu xe.
-
-Tài liệu phương pháp: [scikit-learn: tránh leakage qua Pipeline](https://scikit-learn.org/stable/common_pitfalls.html), [cross-validation theo nhóm](https://scikit-learn.org/stable/modules/cross_validation.html). Nguồn thông số xe được lưu trong CSV reference và sheet `Sources`; pipeline kiểm tra tính nhất quán với dữ liệu đã cung cấp, không tự tuyên bố xác minh các nguồn đó cho xe người dùng.
-
-## 9. Kết quả phiên kiểm tra thực tế
-
-Trước khi nhận yêu cầu dừng chạy thử, pipeline đã chạy với seed 2026 và cấu hình mặc định trên Python 3.13.9: **24 tests đạt, 1 test XGBoost bỏ qua vì thư viện chưa cài**, không có warning trong lần chạy tests cuối. Huấn luyện đầy đủ, lưu/nạp lại hai model, kiểm tra dependency và predict 5 dòng đã thành công. Dữ liệu raw giữ nguyên hash.
+## 7. Kết quả phiên kiểm tra thực tế
 
 | Nhãn | Model được chọn bằng validation | Threshold | Test Accuracy | BAcc | Precision | Recall | F1 | AP | ROC-AUC | FPR |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Y1 | HistGradientBoosting (engineered) | 0.6170 | 0.8773 | 0.8289 | 0.8785 | 0.7015 | 0.7801 | 0.8911 | 0.9355 | 0.0436 |
 | Y2 | LogisticRegression (raw) | 0.2576 | 0.9005 | 0.8071 | 0.4107 | 0.6970 | 0.5169 | 0.6357 | 0.9402 | 0.0827 |
 
-Y2 có AP validation 0,9348 nhưng AP test 0,6357, Precision test chỉ 0,4107. F1 test ở ngưỡng tuned 0,5169 thấp hơn ngưỡng 0.5 (0,5758), dù Recall tăng. Giữ nguyên lựa chọn từ validation; không đổi model hoặc threshold theo kết quả test. Với 33 phiên dương trong test và dữ liệu hoàn toàn giả lập, chưa có bằng chứng đủ cho ứng dụng xe thật.
+Y2 có AP validation 0,9348 nhưng AP test 0,6357, Precision test chỉ 0,4107. F1 test ở ngưỡng tuned 0,5169 thấp hơn ngưỡng 0.5 (0,5758), dù Recall tăng. Giữ nguyên lựa chọn từ validation; không đổi model hoặc threshold theo kết quả test. 
 
 Bảng test của **mọi thuật toán và cả hai biến thể raw/engineered**, confusion matrices, ablation và xác nhận thực thi ở [báo cáo bàn giao](outputs/reports/completion_report.md); dữ liệu máy đọc ở [evaluation.json](outputs/reports/evaluation.json), [model_comparison.csv](outputs/reports/model_comparison.csv) và [verification.json](outputs/reports/verification.json). Đây là snapshot của phiên đã kiểm tra; sau khi chạy lại, xem artifacts mới để biết kết quả hiện hành.
