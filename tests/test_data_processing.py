@@ -11,7 +11,7 @@ from src.modeling import build_pipeline
 
 def test_original_bom_schema_and_targets(dataset):
     assert DEFAULT_DATA.read_bytes().startswith(b"\xef\xbb\xbf")
-    assert dataset.shape == (2880, 43)
+    assert len(dataset) >= 2880 and dataset.shape[1] == 43
     assert set(ALL_COLUMNS) == set(dataset.columns)
     assert list(dataset.columns[-2:]) == TARGETS
     validate_training_data(dataset)
@@ -74,9 +74,10 @@ def test_audit_preserves_missing_fuel_rows(dataset, tmp_path):
     before = dataset.copy(deep=True)
     report = audit_dataset(dataset, tmp_path)
     pd.testing.assert_frame_equal(dataset, before)
-    assert report["shape"] == [2880, 43]
+    assert report["shape"] == list(dataset.shape)
     missing = pd.read_csv(tmp_path / "missing_values.csv").set_index("column")
-    assert missing.loc["xang_do_thi_L_100km", "missing_count"] == 208
+    assert missing.loc["xang_do_thi_L_100km", "missing_count"] == dataset["xang_do_thi_L_100km"].isna().sum()
+    assert dataset.iloc[:2880]["xang_do_thi_L_100km"].isna().sum() == 208
     assert sum(report["invalid_numeric_counts"].values()) == 0
     assert json.loads((tmp_path / "data_quality_report.json").read_text(encoding="utf-8"))["duplicate_rows"] == 0
 

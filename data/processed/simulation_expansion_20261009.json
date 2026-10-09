@@ -1,0 +1,49 @@
+{
+  "created_at": "2026-10-09T10:12:38.166116+07:00",
+  "data": "D:\\VSC\\khtk\\data\\raw\\du_lieu_phan_loai_gia_lap.csv",
+  "backup": "data\\backups\\du_lieu_phan_loai_gia_lap_before_9cef50970930.csv",
+  "before_sha256": "9cef50970930851a990a40e3a6c2479fc952167a511bd3f58f37953b9a591df2",
+  "after_sha256": "0f31f7ed58ba3c353eb2af095aac22f3a329569c03c0dc72aacd5e3467def223",
+  "seed": 20261009,
+  "original_rows": 2880,
+  "added_rows": 5760,
+  "total_rows": 8640,
+  "added_vehicles": 720,
+  "total_vehicles": 1080,
+  "profiles": 14,
+  "new_scenario_ids": {
+    "first": "SIM_EXT_20261009_0000001",
+    "last": "SIM_EXT_20261009_0005760"
+  },
+  "new_vehicle_id_prefix": "FAKE_CAR_EXT_20261009_",
+  "rules": {
+    "version": "electrical_sim_v2",
+    "provenance": "New pedagogical assumptions, NOT the unavailable original generator, NOT measurements or verified automotive thresholds.",
+    "generation": "Independent Monte Carlo vehicles/scenarios from reference profiles; no original targets copied, no duplicated or jittered original rows.",
+    "supply_A": "rating_A * health_pct/100 * clip(0.25 + 0.75*rpm/3000, 0.25, 1)",
+    "headunit_play_A": "idle_A + 8*(volume_pct/100)^1.6*RMS",
+    "amplifier_play_A": "installed * rated_A * (volume_pct/100)^1.4 * RMS",
+    "base_A": "ECU_base_A + headlights_A + blower_A + defogger_A + battery_charge_A",
+    "total_new_A": "base_A + headunit_play_A + amplifier_play_A + installation_leak_A",
+    "margin_new_A": "supply_A - total_new_A",
+    "margin_old_A": "supply_A - (base_A + old_CD_A)",
+    "voltage_V": "clip(14.1 + 0.035*min(margin_new_A, 0) - ground_drop_V, 10.5, 14.4)",
+    "Y1": "new_margin < 0 AND (old_margin >= 0 OR (new_margin < -5 AND old_margin-new_margin >= 5))",
+    "Y2": "new_margin < -5 AND alternator_health >= 85 AND battery_SOH >= 75 AND installation_fault == 0 AND ground_drop < 0.2 AND amplifier_play > 10 AND idle_share > 0.35",
+    "stall": "fuel_pump_fault == 1 OR (new_margin < -25 AND battery_SOC < 35)",
+    "rounding": "Component/supply currents rounded to 2 decimals before computing totals, margins and labels; voltage rounded to 3 decimals.",
+    "units": "Currents A; voltage V; health/SOH/SOC/volume percent 0..100; RMS and idle share 0..1; RPM revolutions/minute.",
+    "music": "Genre/singer independently randomized; neither enters electrical formulas or labels.",
+    "limitations": "Mixing generator versions changes distributions; more simulated rows do not provide real-world validation. Retain batch lineage and evaluate versions separately when interpreting performance."
+  },
+  "added_positive_counts": {
+    "y1_man_hinh_gop_phan_thieu_dien": 1586,
+    "y2_can_nang_cap_may_phat": 141
+  },
+  "combined_positive_counts": {
+    "y1_man_hinh_gop_phan_thieu_dien": 2466,
+    "y2_can_nang_cap_may_phat": 364
+  },
+  "validation": "Exact 43-column schema, unique scenarios, distinct vehicle groups, valid numerical ranges; pre-existing bytes preserved.",
+  "existing_models": "Not retrained. Existing metrics/artifacts refer to the prior 2880-row dataset; run train in a fresh output directory."
+}

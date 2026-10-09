@@ -28,10 +28,10 @@ Chạy riêng MLP, giữ kết quả ở `outputs/nn/`:
 .\.venv\Scripts\python.exe huan_luyen_yaris_ml.py --models MLP --search-iterations 2 --skip-ablations --skip-profile-experiment --skip-permutation-importance --output-dir outputs/nn
 ```
 
-Chạy riêng TabPFN v2 trên CPU, một estimator, dùng **toàn bộ 2.016 dòng train** làm ngữ cảnh; tải checkpoint ở lần đầu. Validation/test được giữ riêng. Nếu bổ sung dữ liệu thật vào train, TabPFN cũng dùng toàn bộ những dòng đó:
+Chạy riêng TabPFN v2 trên CPU, một estimator, dùng **toàn bộ tập train** làm ngữ cảnh; tải checkpoint ở lần đầu. Với dataset mở rộng 8.640 dòng, split mặc định dùng 6.048 dòng train và 1.296 dòng cho mỗi tập validation/test. Nếu bổ sung dữ liệu thật vào train, TabPFN cũng dùng toàn bộ những dòng đó:
 
 ```powershell
-.\.venv\Scripts\python.exe huan_luyen_yaris_ml.py --models TabPFN --tabpfn-version v2 --tabpfn-rows 0 --skip-ablations --skip-profile-experiment --skip-permutation-importance --output-dir outputs/tabpfn_full
+.\.venv\Scripts\python.exe huan_luyen_yaris_ml.py --models TabPFN --tabpfn-version v2 --tabpfn-rows 0 --skip-ablations --skip-profile-experiment --skip-permutation-importance --output-dir outputs/tabpfn_expanded
 ```
 
 Muốn so sánh trong cùng một lần chọn model:
@@ -60,7 +60,7 @@ Dự đoán bằng pipeline đã lưu, chọn đúng thư mục model:
 
 ```powershell
 .\.venv\Scripts\python.exe predict.py --input outputs/nn/reports/example_input.csv --models-dir outputs/nn/models --output outputs/nn/predictions.csv
-.\.venv\Scripts\python.exe predict.py --input outputs/tabpfn_full/reports/example_input.csv --models-dir outputs/tabpfn_full/models --output outputs/tabpfn_full/predictions.csv
+.\.venv\Scripts\python.exe predict.py --input outputs/tabpfn_expanded/reports/example_input.csv --models-dir outputs/tabpfn_expanded/models --output outputs/tabpfn_expanded/predictions.csv
 ```
 
 Tra cứu các tùy chọn:
@@ -71,9 +71,9 @@ Tra cứu các tùy chọn:
 .\.venv\Scripts\python.exe prepare_real_data.py --help
 ```
 
-# Kết quả
-
-Dữ liệu gốc: `data/raw/du_lieu_phan_loai_gia_lap.csv`, 2.880 phiên giả lập, 360 xe; train/validation/test = 2.016/432/432 dòng. Ba file raw giữ nguyên nội dung.
+```powershell
+.\.venv\Scripts\python.exe huan_luyen_yaris_ml.py --models MLP --search-iterations 2 --skip-ablations --skip-profile-experiment --skip-permutation-importance --output-dir outputs/nn_expanded
+```
 
 Kết quả đã có trước lần bổ sung MLP/TabPFN, model chọn bằng validation:
 
@@ -99,3 +99,11 @@ Kết quả lần chạy trên cùng split gốc, seed 2026. MLP chọn từ b�
 | Y1 | 2.016 | 0,3744 | 0,7338 | 0,7099 | 0,2857 | 0,8519 | 0,1716 | 0,0134 |
 | Y2 | 2.016 | 0,1998 | 0,9514 | 0,8139 | 0,7123 | 0,6500 | 0,7879 | 0,0351 |
 
+# Kỹ thuật xử lý dữ liệu
+
+- Kiểm tra schema, ID trùng/thiếu, nhãn 0/1 và phạm vi số; giữ dòng thiếu nhiên liệu và outlier hợp lệ, không tự xóa theo IQR.
+- Numeric: median imputation và missing indicators; categorical: điền `<MISSING>` và OneHotEncoder xử lý category mới. StandardScaler dùng cho LogisticRegression/MLP. TabPFN dùng đầu vào native, không OHE/scaling bên ngoài.
+- Chỉ fit preprocessing trên train/training fold. Chia train/validation/test theo `vehicle_id` gần 70/15/15, tuning bằng GroupKFold; chọn model/ngưỡng trên validation.
+- Loại ID, hai target và biến hậu nghiệm gây leakage khỏi input: dư địa điện, tổng tải mới, dòng máy phát khả dụng, điện áp mô phỏng và chết máy. Ca sĩ/thể loại chỉ ở ablation riêng.
+- Feature engineering: tổng tải nền/đèn/quạt/sấy kính, volume × RMS, SOH × tổng tải, RPM × tỷ lệ không tải; không tái tạo nhãn từ biến hậu nghiệm.
+- Dữ liệu thêm có ID xe/scenario mới, tính lại dòng điện và nhãn theo quy tắc v2; giữ schema 43 cột và lưu nguồn batch ngoài CSV. Không sao chép nhãn cũ hoặc nhân bản các dòng cũ thành xe mới.

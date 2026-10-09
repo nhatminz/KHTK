@@ -7,9 +7,11 @@ from src.feature_engineering import TARGETS
 def test_three_way_group_split_and_class_presence(dataset):
     parts = group_split(dataset)
     assert_group_disjoint(dataset, parts)
-    assert [len(parts[name]) for name in ["train", "validation", "test"]] == [2016, 432, 432]
+    groups = dataset["vehicle_id"].nunique()
+    holdout_groups = max(1, round(groups * 0.15))
+    assert sum(len(indices) for indices in parts.values()) == len(dataset)
     for name, indices in parts.items():
-        assert dataset.iloc[indices]["vehicle_id"].nunique() == (252 if name == "train" else 54)
+        assert dataset.iloc[indices]["vehicle_id"].nunique() == (groups - 2 * holdout_groups if name == "train" else holdout_groups)
         assert all(dataset.iloc[indices][target].nunique() == 2 for target in TARGETS)
     repeat = group_split(dataset)
     for name in parts:
